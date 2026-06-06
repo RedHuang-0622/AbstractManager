@@ -146,19 +146,104 @@ func (sm *ServiceManager[T]) WritedownSingleWithVersion(
 
 // ----------------- 异步写缓存 -----------------
 
+const (
+	defaultAsyncWorkers   = 4
+	defaultAsyncQueueSize = 256
+)
+
+// startAsyncWorkersOnce 惰性启动 worker pool（只启动一次）
+func (sm *ServiceManager[T]) startAsyncWorkersOnce() {
+	sm.asyncMu.Lock()
+	defer sm.asyncMu.Unlock()
+	if sm.asyncStarted {
+		return
+	}
+	if sm.asyncTasks == nil {
+		sm.asyncTasks = make(chan asyncCacheTask[T], defaultAsyncQueueSize)
+	}
+	if sm.asyncShutdown == nil {
+		sm.asyncShutdown = make(chan struct{})
+	}
+	for i := 0; i < defaultAsyncWorkers; i++ {
+		sm.asyncWg.Add(1)
+		go sm.asyncWorker(i)
+	}
+	sm.asyncStarted = true
+}
+
+// asyncWorker 异步缓存写入的 worker goroutine
+func (sm *ServiceManager[T]) asyncWorker(id int) {
+	defer sm.asyncWg.Done()
+	for {
+		select {
+		case <-sm.asyncShutdown:
+			// 排空队列中剩余任务
+			for {
+				select {
+				case task := <-sm.asyncTasks:
+					sm.executeAsyncTask(task)
+				default:
+					return
+				}
+			}
+		case task := <-sm.asyncTasks:
+			sm.executeAsyncTask(task)
+		}
+	}
+}
+
+// executeAsyncTask 执行单个异步缓存写入任务
+func (sm *ServiceManager[T]) executeAsyncTask(task asyncCacheTask[T]) {
+	ctx := task.ctx
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+	}
+	if err := sm.WritedownSingle(ctx, task.key, task.data, &WritedownSingleOptions{Expiration: task.expiration}); err != nil {
+		fmt.Printf("[AsyncCache] Failed for key %s: %v\n", task.key, err)
+	}
+}
+
+// WritedownSingleAsync 异步将单个数据写入缓存（使用 worker pool）
+// 非阻塞：任务队列满时丢弃本次写入并打印 warning
 func (sm *ServiceManager[T]) WritedownSingleAsync(
 	ctx context.Context,
 	key string,
 	data *T,
 	expiration time.Duration,
 ) {
-	go func() {
-		asyncCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := sm.WritedownSingle(asyncCtx, key, data, &WritedownSingleOptions{Expiration: expiration}); err != nil {
-			fmt.Printf("[AsyncCache] Failed for key %s: %v\n", key, err)
-		}
-	}()
+	sm.startAsyncWorkersOnce()
+
+	task := asyncCacheTask[T]{
+		ctx:        ctx,
+		key:        key,
+		data:       data,
+		expiration: expiration,
+	}
+
+	select {
+	case sm.asyncTasks <- task:
+		// 投递成功
+	default:
+		// 队列满，丢弃任务（异步写入语义允许丢）
+		fmt.Printf("[AsyncCache] WARNING: task queue full, dropped write for key %s\n", key)
+	}
+}
+
+// ShutdownAsyncWorkers 关闭异步 worker pool，等待所有在途任务完成
+func (sm *ServiceManager[T]) ShutdownAsyncWorkers() {
+	sm.asyncMu.Lock()
+	if !sm.asyncStarted {
+		sm.asyncMu.Unlock()
+		return
+	}
+	sm.asyncMu.Unlock()
+
+	// 通知 worker 退出
+	close(sm.asyncShutdown)
+	// 等待所有 worker 完成任务（包括排空队列）
+	sm.asyncWg.Wait()
 }
 
 // ----------------- 便捷方法 -----------------

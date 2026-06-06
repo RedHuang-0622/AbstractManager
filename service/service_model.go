@@ -1,6 +1,19 @@
 package service
 
-import "reflect"
+import (
+	"context"
+	"reflect"
+	"sync"
+	"time"
+)
+
+// asyncCacheTask 异步缓存写入任务
+type asyncCacheTask[T any] struct {
+	ctx        context.Context
+	key        string
+	data       *T
+	expiration time.Duration
+}
 
 type ServiceManager[T any] struct {
 	Resource     T      // 被管理的资源
@@ -9,6 +22,13 @@ type ServiceManager[T any] struct {
 	Schema       string // 数据库模式
 	CacheKeyType string // 缓存键
 	CacheKeyName string // 缓存键名称
+
+	// 异步写入 worker pool
+	asyncTasks    chan asyncCacheTask[T] // 任务队列
+	asyncWg       sync.WaitGroup         // 等待所有 worker 完成
+	asyncShutdown chan struct{}          // 通知 worker 退出
+	asyncStarted  bool                   // 是否已启动 worker
+	asyncMu       sync.Mutex             // 保护 asyncStarted
 }
 
 func getTypeName[T any](value T) string {
@@ -25,11 +45,13 @@ func getTypeName[T any](value T) string {
 // 通过reflect获取名字自动赋值给ResourceName和TableName还有keyname
 func NewServiceManager[T any](resource T) *ServiceManager[T] {
 	return &ServiceManager[T]{
-		Resource:     resource,
-		ResourceName: getTypeName(resource),
-		TableName:    getTypeName(resource),
-		Schema:       "public",
-		CacheKeyType: "none",
-		CacheKeyName: getTypeName(resource) + "_key",
+		Resource:      resource,
+		ResourceName:  getTypeName(resource),
+		TableName:     getTypeName(resource),
+		Schema:        "public",
+		CacheKeyType:  "none",
+		CacheKeyName:  getTypeName(resource) + "_key",
+		asyncTasks:    make(chan asyncCacheTask[T], 256),
+		asyncShutdown: make(chan struct{}),
 	}
 }
