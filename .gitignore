@@ -1,0 +1,35 @@
+# --- 文档 ---
+# *_test.go
+
+# --- 测试辅助代码 ---
+# tests/
+e2e/
+
+# --- 测试产物 ---
+*.out
+*.prof
+*.test
+coverage.html
+benchstat.txt
+
+# --- 环境配置 ---
+.env
+
+# --- 二进制 ---
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# --- IDE ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.claude
+
+# --- OS ---
+.DS_Store
+Thumbs.db
