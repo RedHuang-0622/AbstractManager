@@ -123,6 +123,25 @@ func (rm *RedisManager) SetMultiple(ctx context.Context, items map[string]interf
 	return err
 }
 
+// ScanKeys 使用 SCAN 命令安全遍历匹配的 key
+// 生产环境必须使用此函数而非 KEYS 命令，避免阻塞 Redis 主线程
+func ScanKeys(ctx context.Context, client *redis.Client, pattern string, batchSize int64) ([]string, error) {
+	var allKeys []string
+	var cursor uint64
+	for {
+		keys, nextCursor, err := client.Scan(ctx, cursor, pattern, batchSize).Result()
+		if err != nil {
+			return nil, fmt.Errorf("scan keys failed: %w", err)
+		}
+		allKeys = append(allKeys, keys...)
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+	return allKeys, nil
+}
+
 // GetMultiple 批量获取缓存（不变）
 func (rm *RedisManager) GetMultiple(ctx context.Context, keys []string) (map[string][]byte, error) {
 	pipe := rm.Client.Pipeline()

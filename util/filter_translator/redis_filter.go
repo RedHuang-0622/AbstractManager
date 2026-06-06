@@ -88,7 +88,10 @@ func (f *RedisNotEqualFilter) ApplyRedis(ctx context.Context, client *redis.Clie
 type RedisGreaterThanFilter struct{ *GenericFilter }
 
 func (f *RedisGreaterThanFilter) ApplyRedis(ctx context.Context, client *redis.Client, keys []string) ([]string, error) {
-	target, _ := toFloat64(f.Value)
+	target, err := toFloat64(f.Value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid value for > filter on field %s: %w", f.Field, err)
+	}
 	return applyRedisBatchFilter(ctx, client, keys, f.Field, func(val interface{}) bool {
 		v, err := toFloat64(val)
 		return err == nil && v > target
@@ -98,7 +101,10 @@ func (f *RedisGreaterThanFilter) ApplyRedis(ctx context.Context, client *redis.C
 type RedisGreaterThanOrEqualFilter struct{ *GenericFilter }
 
 func (f *RedisGreaterThanOrEqualFilter) ApplyRedis(ctx context.Context, client *redis.Client, keys []string) ([]string, error) {
-	target, _ := toFloat64(f.Value)
+	target, err := toFloat64(f.Value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid value for >= filter on field %s: %w", f.Field, err)
+	}
 	return applyRedisBatchFilter(ctx, client, keys, f.Field, func(val interface{}) bool {
 		v, err := toFloat64(val)
 		return err == nil && v >= target
@@ -108,7 +114,10 @@ func (f *RedisGreaterThanOrEqualFilter) ApplyRedis(ctx context.Context, client *
 type RedisLessThanFilter struct{ *GenericFilter }
 
 func (f *RedisLessThanFilter) ApplyRedis(ctx context.Context, client *redis.Client, keys []string) ([]string, error) {
-	target, _ := toFloat64(f.Value)
+	target, err := toFloat64(f.Value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid value for < filter on field %s: %w", f.Field, err)
+	}
 	return applyRedisBatchFilter(ctx, client, keys, f.Field, func(val interface{}) bool {
 		v, err := toFloat64(val)
 		return err == nil && v < target
@@ -118,7 +127,10 @@ func (f *RedisLessThanFilter) ApplyRedis(ctx context.Context, client *redis.Clie
 type RedisLessThanOrEqualFilter struct{ *GenericFilter }
 
 func (f *RedisLessThanOrEqualFilter) ApplyRedis(ctx context.Context, client *redis.Client, keys []string) ([]string, error) {
-	target, _ := toFloat64(f.Value)
+	target, err := toFloat64(f.Value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid value for <= filter on field %s: %w", f.Field, err)
+	}
 	return applyRedisBatchFilter(ctx, client, keys, f.Field, func(val interface{}) bool {
 		v, err := toFloat64(val)
 		return err == nil && v <= target
@@ -149,8 +161,14 @@ func (f *RedisInFilter) ApplyRedis(ctx context.Context, client *redis.Client, ke
 type RedisBetweenFilter struct{ *GenericBetweenFilter }
 
 func (f *RedisBetweenFilter) ApplyRedis(ctx context.Context, client *redis.Client, keys []string) ([]string, error) {
-	minV, _ := toFloat64(f.Min)
-	maxV, _ := toFloat64(f.Max)
+	minV, err := toFloat64(f.Min)
+	if err != nil {
+		return nil, fmt.Errorf("invalid min value for between filter on field %s: %w", f.Field, err)
+	}
+	maxV, err := toFloat64(f.Max)
+	if err != nil {
+		return nil, fmt.Errorf("invalid max value for between filter on field %s: %w", f.Field, err)
+	}
 	return applyRedisBatchFilter(ctx, client, keys, f.Field, func(val interface{}) bool {
 		v, err := toFloat64(val)
 		return err == nil && v >= minV && v <= maxV

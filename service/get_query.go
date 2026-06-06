@@ -3,21 +3,32 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
+
+	"AbstractManager/util/filter_translator"
 
 	"gorm.io/gorm"
 )
 
+// HavingCondition 结构化的 HAVING 条件（支持运算符，类型安全）
+type HavingCondition struct {
+	Field    string      // 聚合字段/表达式名称（如 "COUNT(*)"、"SUM(amount)"）
+	Operator string      // 运算符: "=", ">", ">=", "<", "<=", "!="
+	Value    interface{} // 比较值
+}
+
 // QueryOptions 查询配置选项
 type QueryOptions struct {
-	Page     int                    // 页码（从1开始）
-	PageSize int                    // 每页数量
-	OrderBy  string                 // 排序字段
-	Order    string                 // 排序方向（ASC/DESC）
-	Preload  []string               // 预加载关联
-	Select   []string               // 指定查询字段
-	Distinct bool                   // 是否去重
-	Group    string                 // 分组字段
-	Having   map[string]interface{} // Having 条件
+	Page            int                    // 页码（从1开始）
+	PageSize        int                    // 每页数量
+	OrderBy         string                 // 排序字段
+	Order           string                 // 排序方向（ASC/DESC）
+	Preload         []string               // 预加载关联
+	Select          []string               // 指定查询字段
+	Distinct        bool                   // 是否去重
+	Group           string                 // 分组字段
+	Having          map[string]interface{} // Having 条件（简易写法：仅支持 = 运算符）
+	HavingConditions []HavingCondition     // Having 条件（结构化写法：支持全部运算符，推荐）
 }
 
 // QueryResult 查询结果
@@ -31,65 +42,13 @@ type QueryResult[T any] struct {
 
 // GetQuery 条件查询（支持分页）
 // queryFunc: 用于构建查询条件的 lambda 函数
+// 注意：纯只读 SELECT 不使用事务，直接复用 GetQueryWithoutTransaction
 func (sm *ServiceManager[T]) GetQuery(
 	ctx context.Context,
 	queryFunc func(*gorm.DB) *gorm.DB,
 	opts *QueryOptions,
 ) (*QueryResult[T], error) {
-	db := GetDB().WithContext(ctx)
-
-	// 设置只读事务隔离级别（READ COMMITTED）
-	db = db.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			db.Rollback()
-		}
-	}()
-
-	// 应用表名
-	db = sm.applyTableName(db)
-
-	// 应用查询条件
-	if queryFunc != nil {
-		db = queryFunc(db)
-	}
-
-	// 统计总数
-	var total int64
-	countDB := db
-	if err := countDB.Model(&sm.Resource).Count(&total).Error; err != nil {
-		db.Rollback()
-		return nil, fmt.Errorf("failed to count records: %w", err)
-	}
-
-	// 应用查询选项
-	db = sm.applyQueryOptions(db, opts)
-
-	// 执行查询
-	var results []T
-	if err := db.Find(&results).Error; err != nil {
-		db.Rollback()
-		return nil, fmt.Errorf("failed to query records: %w", err)
-	}
-
-	// 提交只读事务
-	if err := db.Commit().Error; err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	// 构建返回结果
-	result := &QueryResult[T]{
-		Data:  results,
-		Total: total,
-	}
-
-	if opts != nil && opts.PageSize > 0 {
-		result.Page = opts.Page
-		result.PageSize = opts.PageSize
-		result.TotalPages = int((total + int64(opts.PageSize) - 1) / int64(opts.PageSize))
-	}
-
-	return result, nil
+	return sm.GetQueryWithoutTransaction(ctx, queryFunc, opts)
 }
 
 // GetQueryWithoutTransaction 无事务的条件查询（用于高并发只读场景）
@@ -164,25 +123,59 @@ func (sm *ServiceManager[T]) applyQueryOptions(db *gorm.DB, opts *QueryOptions) 
 		db = db.Distinct()
 	}
 
-	// 应用分组
+	// 应用分组（校验列名防注入）
 	if opts.Group != "" {
+		if err := filter_translator.ValidateSQLIdentifier(opts.Group); err != nil {
+			db.AddError(fmt.Errorf("invalid Group field: %w", err))
+			return db
+		}
 		db = db.Group(opts.Group)
 	}
 
-	// 应用 Having 条件
+	// 应用 Having 条件 - 简易写法（仅支持 = 运算符）
 	if len(opts.Having) > 0 {
 		for key, value := range opts.Having {
+			if err := filter_translator.ValidateSQLIdentifier(key); err != nil {
+				db.AddError(fmt.Errorf("invalid Having key: %w", err))
+				return db
+			}
 			db = db.Having(key, value)
 		}
 	}
 
-	// 应用排序
+	// 应用 Having 条件 - 结构化写法（支持全部运算符）
+	for _, hc := range opts.HavingConditions {
+		if err := filter_translator.ValidateSQLIdentifier(hc.Field); err != nil {
+			db.AddError(fmt.Errorf("invalid HavingCondition field: %w", err))
+			return db
+		}
+		// 校验运算符白名单
+		switch strings.ToUpper(hc.Operator) {
+		case "=", "!=", ">", ">=", "<", "<=":
+			db = db.Having(fmt.Sprintf("%s %s ?", hc.Field, hc.Operator), hc.Value)
+		default:
+			db.AddError(fmt.Errorf("invalid HavingCondition operator: %s", hc.Operator))
+			return db
+		}
+	}
+
+	// 应用排序（校验列名防注入）
 	if opts.OrderBy != "" {
+		if err := filter_translator.ValidateSQLIdentifier(opts.OrderBy); err != nil {
+			db.AddError(fmt.Errorf("invalid OrderBy field: %w", err))
+			return db
+		}
 		order := "ASC"
 		if opts.Order != "" {
 			order = opts.Order
 		}
-		db = db.Order(fmt.Sprintf("%s %s", opts.OrderBy, order))
+		// 校验排序方向，只允许 ASC 或 DESC
+		upperOrder := strings.ToUpper(order)
+		if upperOrder != "ASC" && upperOrder != "DESC" {
+			db.AddError(fmt.Errorf("invalid Order direction: %s (must be ASC or DESC)", order))
+			return db
+		}
+		db = db.Order(fmt.Sprintf("%s %s", opts.OrderBy, upperOrder))
 	}
 
 	// 应用预加载

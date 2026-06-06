@@ -11,11 +11,29 @@ import (
 	"time"
 
 	"AbstractManager/service"
+	"AbstractManager/util"
 	"AbstractManager/util/filter_translator"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
+)
+
+// deriveKeyPrefix 从泛型 T 推导缓存 key 前缀（如 User → "user", Product → "product"）
+func deriveKeyPrefix[T any]() string {
+	var zero T
+	typeName := fmt.Sprintf("%T", zero)
+	// 去掉可能的指针前缀 *
+	typeName = strings.TrimPrefix(typeName, "*")
+	// 只取最后一段（去掉包名前缀）
+	if idx := strings.LastIndex(typeName, "."); idx != -1 {
+		typeName = typeName[idx+1:]
+	}
+	return strings.ToLower(typeName)
+}
+
+var (
+	_ = deriveKeyPrefix[int] // 编译器占位，消除 unused warning
 )
 
 // ========== Lookup 路由组 ==========
@@ -44,9 +62,9 @@ func NewLookupRouterGroup[T any](
 		RouterGroup:        rg,
 		Service:            service,
 		TranslatorRegistry: filter_translator.DefaultRedisRegistry,
-		defaultCacheExpire: getCacheAsideTTL(),
-		cacheAsideTTL:      getCacheAsideTTL(),
-		cacheHitRefresh:    getCacheHitRefresh(),
+		defaultCacheExpire: util.GetCacheAsideTTL(),
+		cacheAsideTTL:      util.GetCacheAsideTTL(),
+		cacheHitRefresh:    util.GetCacheHitRefresh(),
 	}
 }
 
@@ -139,11 +157,11 @@ func (lrg *LookupRouterGroup[T]) executeLookup(
 	fallbackToDB bool,
 ) (map[string]*T, []string, error) {
 
-	// 1. 获取所有匹配的键
+	// 1. 获取所有匹配的键（使用 SCAN 避免阻塞 Redis）
 	redisClient := service.GetRedis()
-	allKeys, err := redisClient.Keys(ctx, keyPattern).Result()
+	allKeys, err := service.ScanKeys(ctx, redisClient, keyPattern, 100)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get keys: %w", err)
+		return nil, nil, fmt.Errorf("failed to scan keys: %w", err)
 	}
 
 	// 2. 应用自定义过滤（如果启用）
@@ -257,7 +275,7 @@ func (lrg *LookupRouterGroup[T]) loadFromDBAndCache(
 			continue
 		}
 
-		key := fmt.Sprintf("user:%d", uint(id))
+		key := fmt.Sprintf("%s:%d", deriveKeyPrefix[T](), uint(id))
 
 		// 写入 Pipeline
 		pipe.Set(ctx, key, jsonData, lrg.cacheAsideTTL)
@@ -311,7 +329,10 @@ func (lrg *LookupRouterGroup[T]) getByKeyCacheAside(ctx context.Context, key str
 
 		// 根据配置决定是否刷新 TTL
 		if lrg.cacheHitRefresh {
-			redisClient.Expire(ctx, key, lrg.cacheAsideTTL)
+			if err := redisClient.Expire(ctx, key, lrg.cacheAsideTTL).Err(); err != nil {
+				// TTL 刷新失败不影响返回数据
+				fmt.Fprintf(os.Stderr, "WARNING: failed to refresh TTL for key %s: %v\n", key, err)
+			}
 		}
 
 		return &result, true, nil
@@ -551,21 +572,6 @@ func (lrg *LookupRouterGroup[T]) HandleInvalidate(c *gin.Context) {
 }
 
 // ========== 辅助函数 ==========
-
-// getCacheAsideTTL 从环境变量获取 Cache Aside TTL
-func getCacheAsideTTL() time.Duration {
-	if ttlStr := os.Getenv("CACHE_ASIDE_TTL"); ttlStr != "" {
-		if ttl, err := strconv.Atoi(ttlStr); err == nil {
-			return time.Duration(ttl) * time.Second
-		}
-	}
-	return 1 * time.Hour // 默认1小时
-}
-
-// getCacheHitRefresh 从环境变量获取是否刷新缓存配置
-func getCacheHitRefresh() bool {
-	return os.Getenv("CACHE_HIT_REFRESH") == "true"
-}
 
 // getSource 返回数据来源描述
 func getSource(cacheHit bool) string {
