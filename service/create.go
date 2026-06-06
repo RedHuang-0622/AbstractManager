@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -82,10 +83,14 @@ func (sm *ServiceManager[T]) createIndex(db *gorm.DB, idx Index) error {
 		tableName = fmt.Sprintf("%s.%s", sm.Schema, sm.TableName)
 	}
 
+	columns := strings.Join(idx.Columns, ", ")
+
 	if idx.Unique {
-		return db.Table(tableName).Migrator().CreateIndex(&sm.Resource, idx.Name)
+		sql := fmt.Sprintf("CREATE UNIQUE INDEX %s ON %s (%s)", idx.Name, tableName, columns)
+		return db.Exec(sql).Error
 	}
-	return db.Table(tableName).Migrator().CreateIndex(&sm.Resource, idx.Name)
+	sql := fmt.Sprintf("CREATE INDEX %s ON %s (%s)", idx.Name, tableName, columns)
+	return db.Exec(sql).Error
 }
 
 // DropTable 删除数据表

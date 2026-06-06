@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
+	"AbstractManager/util/filter_translator"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -174,6 +176,11 @@ func (sm *ServiceManager[T]) BatchIncrement(
 	value interface{},
 	queryFunc func(*gorm.DB) *gorm.DB,
 ) (int64, error) {
+	// 校验列名，防止 SQL 注入
+	if err := filter_translator.ValidateSQLIdentifier(column); err != nil {
+		return 0, fmt.Errorf("invalid column name %q: %w", column, err)
+	}
+
 	var rowsAffected int64
 	err := GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = sm.applyTableName(tx)
@@ -199,6 +206,11 @@ func (sm *ServiceManager[T]) BatchDecrement(
 	value interface{},
 	queryFunc func(*gorm.DB) *gorm.DB,
 ) (int64, error) {
+	// 校验列名，防止 SQL 注入
+	if err := filter_translator.ValidateSQLIdentifier(column); err != nil {
+		return 0, fmt.Errorf("invalid column name %q: %w", column, err)
+	}
+
 	// 减量可以直接调用加量传入负值，或者保持原样
 	var rowsAffected int64
 	err := GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {

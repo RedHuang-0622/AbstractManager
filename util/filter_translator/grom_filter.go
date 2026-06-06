@@ -16,13 +16,22 @@ type GormFilter interface {
 
 // ========== GORM Filter 实现 ==========
 
+// applyGormWhere 通用安全 WHERE 构建，校验列名防 SQL 注入
+func applyGormWhere(db *gorm.DB, field string, clause string, args ...interface{}) *gorm.DB {
+	if err := ValidateSQLIdentifier(field); err != nil {
+		db.AddError(fmt.Errorf("invalid filter field: %w", err))
+		return db
+	}
+	return db.Where(fmt.Sprintf("%s "+clause, field), args...)
+}
+
 // GormEqualFilter 等于过滤器
 type GormEqualFilter struct {
 	*GenericFilter
 }
 
 func (f *GormEqualFilter) ApplyGorm(db *gorm.DB) *gorm.DB {
-	return db.Where(fmt.Sprintf("%s = ?", f.Field), f.Value)
+	return applyGormWhere(db, f.Field, "= ?", f.Value)
 }
 
 // GormNotEqualFilter 不等于过滤器
@@ -31,7 +40,7 @@ type GormNotEqualFilter struct {
 }
 
 func (f *GormNotEqualFilter) ApplyGorm(db *gorm.DB) *gorm.DB {
-	return db.Where(fmt.Sprintf("%s != ?", f.Field), f.Value)
+	return applyGormWhere(db, f.Field, "!= ?", f.Value)
 }
 
 // GormGreaterThanFilter 大于过滤器
@@ -40,7 +49,7 @@ type GormGreaterThanFilter struct {
 }
 
 func (f *GormGreaterThanFilter) ApplyGorm(db *gorm.DB) *gorm.DB {
-	return db.Where(fmt.Sprintf("%s > ?", f.Field), f.Value)
+	return applyGormWhere(db, f.Field, "> ?", f.Value)
 }
 
 // GormGreaterThanOrEqualFilter 大于等于过滤器
@@ -49,7 +58,7 @@ type GormGreaterThanOrEqualFilter struct {
 }
 
 func (f *GormGreaterThanOrEqualFilter) ApplyGorm(db *gorm.DB) *gorm.DB {
-	return db.Where(fmt.Sprintf("%s >= ?", f.Field), f.Value)
+	return applyGormWhere(db, f.Field, ">= ?", f.Value)
 }
 
 // GormLessThanFilter 小于过滤器
@@ -58,7 +67,7 @@ type GormLessThanFilter struct {
 }
 
 func (f *GormLessThanFilter) ApplyGorm(db *gorm.DB) *gorm.DB {
-	return db.Where(fmt.Sprintf("%s < ?", f.Field), f.Value)
+	return applyGormWhere(db, f.Field, "< ?", f.Value)
 }
 
 // GormLessThanOrEqualFilter 小于等于过滤器
@@ -67,7 +76,7 @@ type GormLessThanOrEqualFilter struct {
 }
 
 func (f *GormLessThanOrEqualFilter) ApplyGorm(db *gorm.DB) *gorm.DB {
-	return db.Where(fmt.Sprintf("%s <= ?", f.Field), f.Value)
+	return applyGormWhere(db, f.Field, "<= ?", f.Value)
 }
 
 // GormLikeFilter 模糊匹配过滤器
@@ -76,6 +85,10 @@ type GormLikeFilter struct {
 }
 
 func (f *GormLikeFilter) ApplyGorm(db *gorm.DB) *gorm.DB {
+	if err := ValidateSQLIdentifier(f.Field); err != nil {
+		db.AddError(fmt.Errorf("invalid filter field: %w", err))
+		return db
+	}
 	return db.Where(fmt.Sprintf("%s LIKE ?", f.Field), "%"+f.Value.(string)+"%")
 }
 
@@ -85,6 +98,10 @@ type GormInFilter struct {
 }
 
 func (f *GormInFilter) ApplyGorm(db *gorm.DB) *gorm.DB {
+	if err := ValidateSQLIdentifier(f.Field); err != nil {
+		db.AddError(fmt.Errorf("invalid filter field: %w", err))
+		return db
+	}
 	return db.Where(fmt.Sprintf("%s IN ?", f.Field), f.Values)
 }
 
@@ -94,6 +111,10 @@ type GormBetweenFilter struct {
 }
 
 func (f *GormBetweenFilter) ApplyGorm(db *gorm.DB) *gorm.DB {
+	if err := ValidateSQLIdentifier(f.Field); err != nil {
+		db.AddError(fmt.Errorf("invalid filter field: %w", err))
+		return db
+	}
 	return db.Where(fmt.Sprintf("%s BETWEEN ? AND ?", f.Field), f.Min, f.Max)
 }
 
@@ -103,6 +124,10 @@ type GormIsNullFilter struct {
 }
 
 func (f *GormIsNullFilter) ApplyGorm(db *gorm.DB) *gorm.DB {
+	if err := ValidateSQLIdentifier(f.Field); err != nil {
+		db.AddError(fmt.Errorf("invalid filter field: %w", err))
+		return db
+	}
 	return db.Where(fmt.Sprintf("%s IS NULL", f.Field))
 }
 
@@ -112,6 +137,10 @@ type GormIsNotNullFilter struct {
 }
 
 func (f *GormIsNotNullFilter) ApplyGorm(db *gorm.DB) *gorm.DB {
+	if err := ValidateSQLIdentifier(f.Field); err != nil {
+		db.AddError(fmt.Errorf("invalid filter field: %w", err))
+		return db
+	}
 	return db.Where(fmt.Sprintf("%s IS NOT NULL", f.Field))
 }
 

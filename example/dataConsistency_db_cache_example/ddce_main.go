@@ -1,15 +1,18 @@
 package main
 
 import (
-	"AbstractManager/example/dataconsistency_db_cache_example/model"
+	"AbstractManager/example/dataConsistency_db_cache_example/model"
 	"AbstractManager/http_router"
 	"AbstractManager/service"
+	"AbstractManager/util"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
-	"strconv"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,7 +22,9 @@ import (
 // --- 环境与基础设施初始化 ---
 
 func initEnv() {
-	_ = godotenv.Load()
+	if err := godotenv.Load(); err != nil {
+		log.Printf("WARNING: .env file not loaded: %v (using system env vars only)", err)
+	}
 }
 
 func initInfra() (*service.DBManager, *service.RedisManager) {
@@ -36,7 +41,9 @@ func initInfra() (*service.DBManager, *service.RedisManager) {
 
 func initServices() *service.ServiceManager[model.User] {
 	userSvc := service.NewServiceManager(model.User{})
-	_ = userSvc.Create(context.Background(), &service.CreateOptions{IfNotExists: true})
+	if err := userSvc.Create(context.Background(), &service.CreateOptions{IfNotExists: true}); err != nil {
+		log.Printf("WARNING: auto-create table failed (may already exist): %v", err)
+	}
 	return userSvc
 }
 
@@ -164,26 +171,18 @@ func recacheUsers(ctx context.Context, users []model.User, ttl time.Duration) (i
 	return len(users), nil
 }
 
-// --- 配置辅助函数 ---
+// --- 配置辅助函数（委托到共享 util 包）---
 
 func getCacheAsideTTL() time.Duration {
-	if ttlStr := os.Getenv("CACHE_ASIDE_TTL"); ttlStr != "" {
-		if ttl, err := strconv.Atoi(ttlStr); err == nil {
-			return time.Duration(ttl) * time.Second
-		}
-	}
-	return 1 * time.Hour
+	return util.GetCacheAsideTTL()
 }
 
 func getCacheHitRefresh() bool {
-	return os.Getenv("CACHE_HIT_REFRESH") == "true"
+	return util.GetCacheHitRefresh()
 }
 
 func getEnvOrDefault(key, defaultValue string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return defaultValue
+	return util.GetEnvOrDefault(key, defaultValue)
 }
 
 // --- 定时同步任务 ---
@@ -241,5 +240,35 @@ func main() {
 	log.Println("================================")
 	log.Printf("Server: %s", addr)
 
-	_ = router.Run(addr)
+	// 创建 http.Server 以支持优雅关闭
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: router,
+	}
+
+	// 在独立 goroutine 中启动服务
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server fatal: %v", err)
+		}
+	}()
+
+	// 等待中断信号
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("🛑 Shutting down gracefully...")
+
+	// 通知后台任务停止
+	cancel()
+
+	// 给 HTTP 服务 5 秒完成当前请求
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Server forced to shutdown: %v", err)
+	}
+
+	log.Println("✅ Server stopped")
 }

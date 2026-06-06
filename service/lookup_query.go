@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -167,25 +169,57 @@ func (sm *ServiceManager[T]) LookupQueryWithRefresh(
 	return result, nil
 }
 
+// extractID 从结构体 T 中提取 uint ID 字段（通过 JSON 序列化/反序列化）
+func extractID[T any](item *T) (uint, bool) {
+	jsonData, err := json.Marshal(item)
+	if err != nil {
+		return 0, false
+	}
+	var tempMap map[string]interface{}
+	if err := json.Unmarshal(jsonData, &tempMap); err != nil {
+		return 0, false
+	}
+	id, ok := tempMap["id"].(float64)
+	if !ok {
+		return 0, false
+	}
+	return uint(id), true
+}
+
+// extractIDFromKey 从缓存键 "prefix:123" 中提取 uint ID
+func extractIDFromKey(key string) (uint, error) {
+	parts := strings.Split(key, ":")
+	if len(parts) < 2 {
+		return 0, fmt.Errorf("invalid key format: %s (expected prefix:id)", key)
+	}
+	id, err := strconv.ParseUint(parts[len(parts)-1], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse ID from key %s: %w", key, err)
+	}
+	return uint(id), nil
+}
+
 // lookupFromDB 从数据库查询缓存未命中的数据
 func (sm *ServiceManager[T]) lookupFromDB(
 	ctx context.Context,
 	keys []string,
 	opts *LookupQueryOptions,
 ) (map[string]*T, error) {
-	// 这是一个简化版本，实际使用时需要根据业务逻辑实现
-	// 通常需要将缓存键转换为数据库查询条件
-
 	db := GetDB().WithContext(ctx)
 	db = sm.applyTableName(db)
 
-	// 这里假设缓存键格式为 "资源名:ID"
-	// 实际使用时需要根据具体的键格式来解析
+	// 从缓存键中解析 ID 列表
 	var ids []interface{}
 	for _, key := range keys {
-		// 解析键获取 ID（需要根据实际键格式实现）
-		// 这里只是示例
-		ids = append(ids, key)
+		id, err := extractIDFromKey(key)
+		if err != nil {
+			continue // 跳过格式不正确的 key
+		}
+		ids = append(ids, id)
+	}
+
+	if len(ids) == 0 {
+		return make(map[string]*T), nil
 	}
 
 	var results []T
@@ -199,7 +233,13 @@ func (sm *ServiceManager[T]) lookupFromDB(
 
 	for i := range results {
 		item := &results[i]
-		key := fmt.Sprintf("%s:%v", sm.CacheKeyName, item) // 需要根据实际情况实现
+
+		// 从 item 中提取 ID 字段，构建正确的 key
+		id, ok := extractID(item)
+		if !ok {
+			continue
+		}
+		key := sm.buildCacheKey(id)
 
 		// 写入缓存
 		expiration := 1 * time.Hour
@@ -278,8 +318,8 @@ func (sm *ServiceManager[T]) InvalidateCache(ctx context.Context, keys ...string
 func (sm *ServiceManager[T]) InvalidateCacheByPattern(ctx context.Context, pattern string) error {
 	redis := GetRedis()
 
-	// 获取匹配的键
-	keys, err := redis.Keys(ctx, pattern).Result()
+	// 使用 SCAN 安全遍历匹配的键（避免 KEYS 阻塞 Redis）
+	keys, err := ScanKeys(ctx, redis, pattern, 100)
 	if err != nil {
 		return fmt.Errorf("failed to scan keys with pattern %s: %w", pattern, err)
 	}

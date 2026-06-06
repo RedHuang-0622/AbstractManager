@@ -1,5 +1,23 @@
 package filter_translator
 
+import (
+	"fmt"
+	"regexp"
+)
+
+// ========== SQL 标识符校验 ==========
+
+// validIdentifierRE 只允许字母、数字、下划线组成的 SQL 标识符
+var validIdentifierRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+// ValidateSQLIdentifier 校验 SQL 标识符（列名、表名、排序字段等），防止 SQL 注入
+func ValidateSQLIdentifier(name string) error {
+	if !validIdentifierRE.MatchString(name) {
+		return fmt.Errorf("invalid SQL identifier: %s", name)
+	}
+	return nil
+}
+
 // ========== 通用过滤器接口 ==========
 
 // FilterParam 前端过滤参数（统一格式）
