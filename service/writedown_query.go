@@ -17,6 +17,7 @@ type WritedownQueryOptions struct {
 }
 
 // WritedownQuery 批量将数据写入缓存
+// 使用 Pipeline + Set(TTL) 替代旧的 MSet+逐个Expire，一次网络往返完成一批写入
 func (sm *ServiceManager[T]) WritedownQuery(
 	ctx context.Context,
 	data []T,
@@ -35,7 +36,7 @@ func (sm *ServiceManager[T]) WritedownQuery(
 		}
 	}
 
-	redis := GetRedis() // 假设返回的是 *redis.Client
+	rdb := GetRedis()
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
 		batchSize = 100
@@ -48,35 +49,29 @@ func (sm *ServiceManager[T]) WritedownQuery(
 		}
 
 		batch := data[i:end]
-		cacheItems := make(map[string]interface{})
+		pipe := rdb.Pipeline()
 
 		for j := range batch {
 			item := &batch[j]
 			key := buildKeyFunc(item)
 
 			if !opts.Overwrite {
-				// 🛠️ 修复 1: Exists 返回的是 *IntCmd，需要调用 .Val() 获取结果
-				if redis.Exists(ctx, key).Val() > 0 {
+				if rdb.Exists(ctx, key).Val() > 0 {
 					continue
 				}
 			}
+
 			valueBytes, err := json.Marshal(item)
 			if err != nil {
 				return fmt.Errorf("failed to marshal item for key %s: %w", key, err)
 			}
 
-			cacheItems[key] = valueBytes // 存 []byte
+			// Pipeline + Set 同时设置值和 TTL（一次往返完成一批）
+			pipe.Set(ctx, key, valueBytes, opts.Expiration)
 		}
 
-		if len(cacheItems) > 0 {
-			// 🛠️ 修复 2: go-redis 标准方法是 MSet，而不是 SetMultiple
-			if err := redis.MSet(ctx, cacheItems).Err(); err != nil {
-				return fmt.Errorf("failed to write batch to cache: %w", err)
-			}
-			// 💡 注意：MSet 不支持在同一条命令设置过期时间，需要后续配合 Expire 处理或改用 Pipeline
-			for key := range cacheItems {
-				redis.Expire(ctx, key, opts.Expiration)
-			}
+		if _, err := pipe.Exec(ctx); err != nil {
+			return fmt.Errorf("failed to write batch to cache: %w", err)
 		}
 	}
 

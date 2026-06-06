@@ -3,11 +3,10 @@ package http_router
 import (
 	"fmt"
 	"net/http"
-	"os"
-	"strconv"
 	"time"
 
 	"AbstractManager/service"
+	"AbstractManager/util"
 	"AbstractManager/util/cache_key_builder"
 
 	"github.com/gin-gonic/gin"
@@ -109,15 +108,10 @@ func (wdg *WritedownRouterGroup[T]) RegisterRoutes(basePath string) {
 
 // ==================== 公共辅助 (逻辑更新点) ====================
 
-// getEnvCacheTime 获取环境变量中的默认过期时间
+// getEnvCacheTime 获取环境变量中的默认过期时间（秒）
 func getEnvCacheTime() int64 {
-	val := os.Getenv("CACHE_TTL_SECONDS")
-	if val != "" {
-		if sec, err := strconv.ParseInt(val, 10, 64); err == nil && sec > 0 {
-			return sec
-		}
-	}
-	return 3600 // 最终兜底：1小时
+	ttl := util.GetCacheAsideTTL()
+	return int64(ttl.Seconds())
 }
 
 // parseExpiration 优先使用 customSec，如果为0则尝试环境变量，最后使用 fallbackDefault
