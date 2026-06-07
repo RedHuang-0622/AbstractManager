@@ -1,6 +1,7 @@
 package http_router
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -22,7 +23,7 @@ type PaginatedQueryMethod[T any] struct {
 	Order      string
 }
 
-func (m *PaginatedQueryMethod[T]) Execute(page int, filters []filter_translator.GormFilter) (*service.QueryResult[T], error) {
+func (m *PaginatedQueryMethod[T]) Execute(ctx context.Context, page int, filters []filter_translator.GormFilter) (*service.QueryResult[T], error) {
 	queryFunc := func(db *gorm.DB) *gorm.DB {
 		if m.FilterFunc != nil {
 			db = m.FilterFunc(db)
@@ -41,7 +42,7 @@ func (m *PaginatedQueryMethod[T]) Execute(page int, filters []filter_translator.
 		Order:    m.Order,
 	}
 
-	return m.Service.GetQuery(nil, queryFunc, opts)
+	return m.Service.GetQuery(ctx, queryFunc, opts)
 }
 
 // ========== 查询方法注册表 (保持不变) ==========
@@ -174,7 +175,7 @@ func (qrg *QueryRouterGroup[T]) HandleQuery(c *gin.Context) {
 		return
 	}
 
-	result, err := method.Execute(req.Page, filters)
+	result, err := method.Execute(c.Request.Context(), req.Page, filters)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "query failed", "error": err.Error()})
 		return
@@ -193,7 +194,7 @@ func (qrg *QueryRouterGroup[T]) HandleQuery(c *gin.Context) {
 
 func (qrg *QueryRouterGroup[T]) HandleGetByID(c *gin.Context) {
 	id := c.Param("id")
-	result, err := qrg.Service.GetSingleByID(nil, id, nil)
+	result, err := qrg.Service.GetSingleByID(c.Request.Context(), id, nil)
 	if err != nil {
 		if err.Error() == "record not found" {
 			c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "record not found"})
@@ -223,7 +224,7 @@ func (qrg *QueryRouterGroup[T]) HandleCount(c *gin.Context) {
 		return filter_translator.ApplyGormFilters(db, filters)
 	}
 
-	count, err := qrg.Service.CountQuery(nil, queryFunc)
+	count, err := qrg.Service.CountQuery(c.Request.Context(), queryFunc)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "count failed", "error": err.Error()})
 		return
