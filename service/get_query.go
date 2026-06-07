@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"AbstractManager/util"
 	"AbstractManager/util/filter_translator"
 
 	"gorm.io/gorm"
@@ -57,6 +58,9 @@ func (sm *ServiceManager[T]) GetQueryWithoutTransaction(
 	queryFunc func(*gorm.DB) *gorm.DB,
 	opts *QueryOptions,
 ) (*QueryResult[T], error) {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
+
 	db := GetDB().WithContext(ctx)
 
 	// 应用表名
@@ -201,6 +205,9 @@ func (sm *ServiceManager[T]) CountQuery(
 	ctx context.Context,
 	queryFunc func(*gorm.DB) *gorm.DB,
 ) (int64, error) {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
+
 	db := GetDB().WithContext(ctx)
 
 	// 应用表名

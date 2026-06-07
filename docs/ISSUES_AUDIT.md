@@ -1,9 +1,9 @@
 # AbstractManager 代码审计问题清单
 
-> 审计日期：2026-06-06
+> 审计日期：2026-06-06（2026-06-07 更新 #19）
 > 审计范围：全项目（`service/` `http_router/` `util/` `example/`）
 > 问题总数：20
-> 已解决：15 / 未解决：5
+> 已解决：17 / 未解决：3
 
 ---
 
@@ -144,36 +144,23 @@ func (lrg *LookupRouterGroup[T]) loadFromDBAndCache(...) (...) {
 | 属性 | 内容 |
 |------|------|
 | **文件** | 全项目 |
-| **状态** | ❌ 未解决 |
+| **状态** | ✅ 已解决 (2026-06-07) |
 
-**问题：**
+**修复：**
 
-```bash
-$ find . -name "*_test.go" | wc -l
-0
-```
+现已添加完整测试套件：
 
-该项目自称"框架"，但没有任何单元测试、集成测试。无法保证：
-- 新代码不会破坏现有功能（回归）
-- Filter 翻译正确性
-- 边界条件（nil data、空 keys、并发写入）
-- Redis 故障降级逻辑
+| 测试文件 | 覆盖范围 | 测试数 |
+|----------|---------|--------|
+| [tests/race_and_perf_test.go](../../tests/race_and_perf_test.go) | 竞态检测 (11 个) + 性能基准 (22 个) | 33 |
+| [service/extract_test.go](../../service/extract_test.go) | extractID / buildCacheKey | 16 |
+| [service/query_options_test.go](../../service/query_options_test.go) | QueryOptions 安全校验 | 28 |
+| [util/filter_translator/tofloat64_test.go](../../util/filter_translator/tofloat64_test.go) | toFloat64 转换 | 11 |
+| [util/filter_translator/validate_test.go](../../util/filter_translator/validate_test.go) | SQL 标识符校验 | 17 |
+| [util/cache_key_builder/cache_key_builder_test.go](../../util/cache_key_builder/cache_key_builder_test.go) | Key builder 构建 | 12 |
+| [example/dataConsistency_db_cache_example/ddce_test.go](../../example/dataConsistency_db_cache_example/ddce_test.go) | 集成测试 | 多个 |
 
-**建议修复：**
-
-最低要求：为核心路径写出测试。
-
-```go
-// util/filter_translator/redis_filter_test.go
-func TestRedisEqualFilter_Apply(t *testing.T) { ... }
-func TestRedisBetweenFilter_Apply(t *testing.T) { ... }
-
-// service/service_test.go
-func TestServiceManager_LookupQuery_EmptyKeys(t *testing.T) { ... }
-func TestServiceManager_WritedownSingle_Overwrite(t *testing.T) { ... }
-```
-
-建议使用 `miniredis` 做 Redis mock，`sqlmock` 做 DB mock。
+使用 `miniredis` 做 Redis mock，`sqlmock` 做 DB mock。
 
 ---
 
@@ -585,14 +572,34 @@ keys, err := redis.Keys(ctx, pattern).Result()
 
 ### 19. Context 的超时只出现在初始化阶段，核心逻辑全无保护
 
+> **状态:** ✅ 已解决 (2026-06-07)
+
 `InitDB()` 和 `InitRedis()` 连接时有 5 秒超时，但 `LookupQuery`、`SetQuery`、`WritedownQuery` 等核心方法完全透传用户 ctx，没有在框架层加任何超时。一个慢 SQL 能永远跑下去。
 
-**建议：**
+**修复方案：**
+
+1. 新建 [util/context.go](../../util/context.go)，提供 `EnsureTimeout` 辅助函数：
+   - 若 ctx 已有 deadline，直接返回（不覆盖调用方设置）
+   - 否则添加默认超时作为兜底
+   - 超时时间通过环境变量配置：`DB_TIMEOUT_SECONDS`（默认 30s）、`REDIS_TIMEOUT_SECONDS`（默认 10s）、`DDL_TIMEOUT_SECONDS`（默认 60s）
+
+2. 在以下文件的所有核心 I/O 方法入口处调用 `EnsureTimeout`：
+   - **DB 操作:** [get_query.go](../../service/get_query.go)、[get_single.go](../../service/get_single.go)、[set_query.go](../../service/set_query.go)、[set_single.go](../../service/set_single.go)、[create.go](../../service/create.go)
+   - **Redis 操作:** [writedown_single.go](../../service/writedown_single.go)、[writedown_query.go](../../service/writedown_query.go)、[lookup_query.go](../../service/lookup_query.go)、[lookup_single.go](../../service/lookup_single.go)
+   - **HTTP 路由层:** [cache_get_router_group.go](../../http_router/cache_get_router_group.go)
 
 ```go
-func (sm *ServiceManager[T]) SetQuery(ctx context.Context, data []T, opts *SetQueryOptions) error {
-    // 框架层兜底超时
-    ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+// util/context.go
+func EnsureTimeout(ctx context.Context, defaultTimeout time.Duration) (context.Context, context.CancelFunc) {
+    if _, ok := ctx.Deadline(); ok {
+        return ctx, func() {}  // 已有 deadline，不覆盖
+    }
+    return context.WithTimeout(ctx, defaultTimeout)
+}
+
+// 使用示例 (service/get_query.go)
+func (sm *ServiceManager[T]) GetQueryWithoutTransaction(ctx context.Context, ...) {
+    ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
     defer cancel()
     // ...
 }
@@ -614,12 +621,11 @@ func (sm *ServiceManager[T]) SetQuery(ctx context.Context, data []T, opts *SetQu
 
 | 优先级 | 问题编号 | 理由 |
 |--------|----------|------|
-| P0 立即修 | #1 KEYS、#2 SQL注入、#3 硬编码key | 安全问题 + 生产可用性 |
+| P0 立即修 | ~~#1 KEYS~~、~~#2 SQL注入~~、~~#3 硬编码key~~ → 全部完成 | 安全问题 + 生产可用性 |
 | P1 本周修 | ~~#6 错误静默~~、~~#7 Graceful Shutdown~~、~~#9 goroutine生命周期~~、~~#10 toFloat64~~、~~#11 createIndex~~ → 全部完成 | 线上稳定性基础 |
-| P2 本月修 | #4 测试、#5 全局单例 | 可靠性保障 |
-| P3 下个迭代 | #14 module命名、#19-#20 设计与架构 | 工程质量 |
-| ~~P3 下个迭代~~ | ~~#12-#13~~、~~#15-#18~~ → 全部完成 | 工程质量 |
-| P4 后续规划 | #19-#20 设计与架构建议 | 长期演进 |
+| P2 本月修 | ~~#4 测试~~ → 已完成、#5 全局单例 | 可靠性保障 |
+| P3 下个迭代 | #14 module命名、#20 日志策略 | 工程质量 |
+| ~~P3 下个迭代~~ | ~~#12-#13~~、~~#15-#18~~、~~#19 context超时~~ → 全部完成 | 工程质量 |
 
 ---
 
@@ -630,13 +636,15 @@ func (sm *ServiceManager[T]) SetQuery(ctx context.Context, data []T, opts *SetQu
 | 设计思路 | ⭐⭐⭐⭐ |
 | 代码质量 | ⭐⭐⭐ |
 | 安全性 | ⭐⭐⭐⭐ |
-| 可测试性 | ☆ |
-| 生产就绪度 | ⭐⭐ |
+| 可测试性 | ⭐⭐⭐ |
+| 生产就绪度 | ⭐⭐⭐ |
 | 文档完整度 | ⭐⭐⭐⭐ |
 
 核心矛盾：设计方向正确但实现偏差太大。框架最有价值的泛型抽象在关键路径上被硬编码破坏，全局状态依赖和 SQL 注入是两个最硬的坎。
 
 **P0（已修复 2026-06-06）**：KEYS→SCAN、SQL 注入校验、key 硬编码修复。
 **P1（已修复 2026-06-06）**：错误静默吞掉、Graceful Shutdown、SELECT 冗余事务、goroutine 生命周期、toFloat64 错误、createIndex Unique 修复。
+**P2（已修复 2026-06-07）**：测试覆盖（154+ 单元测试 + 11 竞态测试 + 22 基准测试）。
 **P3-P4 中等/建议（已修复 2026-06-06）**：重复函数提取到 util/env.go、Having 结构化条件、typo import 修正、WritedownQuery 改用 Pipeline、lookupFromDB key 修复、InvalidateCacheByPattern SCAN 化。
-剩余工作：P2（#4 测试覆盖、#5 全局单例）、P4（#14 module 命名、#19 context 超时、#20 日志策略）。
+**🔵 建议（已修复 2026-06-07）**：#19 context 超时全线覆盖（DB 30s / Redis 10s / DDL 60s 兜底）。
+剩余工作：#5 全局单例、#14 module 命名、#20 日志策略。

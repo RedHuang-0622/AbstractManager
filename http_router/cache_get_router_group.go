@@ -157,6 +157,9 @@ func (lrg *LookupRouterGroup[T]) executeLookup(
 	fallbackToDB bool,
 ) (map[string]*T, []string, error) {
 
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
+
 	// 1. 获取所有匹配的键（使用 SCAN 避免阻塞 Redis）
 	redisClient := service.GetRedis()
 	allKeys, err := service.ScanKeys(ctx, redisClient, keyPattern, 100)
@@ -225,6 +228,9 @@ func (lrg *LookupRouterGroup[T]) loadFromDBAndCache(
 	keyPattern string,
 	filters []filter_translator.FilterParam,
 ) (map[string]*T, []string, error) {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
+
 	// 将 Redis filters 转换为 GORM 查询条件
 	var queryFunc func(*gorm.DB) *gorm.DB
 
@@ -316,6 +322,8 @@ func (lrg *LookupRouterGroup[T]) extractIDFromKey(key string) (uint, error) {
 // 3. 如果未命中：从 DB 查询，转为 JSON，写入 Redis，设置 TTL
 func (lrg *LookupRouterGroup[T]) getByKeyCacheAside(ctx context.Context, key string) (*T, bool, error) {
 	redisClient := service.GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 
 	// Step 1: 尝试从 Redis 获取
 	var result T

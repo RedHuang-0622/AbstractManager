@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"AbstractManager/util"
+
 	"gorm.io/gorm"
 )
 
@@ -30,6 +32,9 @@ func (sm *ServiceManager[T]) LookupQuery(
 	if len(keys) == 0 {
 		return make(map[string]*T), nil
 	}
+
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 
 	// 批量获取缓存
 	dataMap, err := redis.MGet(ctx, keys...).Result()
@@ -89,6 +94,8 @@ func (sm *ServiceManager[T]) LookupQueryByPattern(
 	opts *LookupQueryOptions,
 ) (map[string]*T, error) {
 	redis := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 	var allKeys []string
 	var cursor uint64
 
@@ -279,6 +286,8 @@ func (sm *ServiceManager[T]) RefreshCache(
 
 	// 批量写入缓存
 	redis := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 	cacheItems := make(map[string]interface{})
 
 	for i := range results {
@@ -307,6 +316,8 @@ func (sm *ServiceManager[T]) InvalidateCache(ctx context.Context, keys ...string
 	}
 
 	redis := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 	if err := redis.Del(ctx, keys...).Err(); err != nil {
 		return fmt.Errorf("failed to invalidate cache: %w", err)
 	}
@@ -317,6 +328,8 @@ func (sm *ServiceManager[T]) InvalidateCache(ctx context.Context, keys ...string
 // InvalidateCacheByPattern 根据模式使缓存失效
 func (sm *ServiceManager[T]) InvalidateCacheByPattern(ctx context.Context, pattern string) error {
 	redis := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 
 	// 使用 SCAN 安全遍历匹配的键（避免 KEYS 阻塞 Redis）
 	keys, err := ScanKeys(ctx, redis, pattern, 100)

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"AbstractManager/util"
+
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
@@ -47,6 +49,9 @@ func (sm *ServiceManager[T]) WritedownSingle(
 		return fmt.Errorf("failed to marshal data for key %s: %w", key, err)
 	}
 
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
+
 	var cmdErr error
 	if opts.NX {
 		cmdErr = rdb.SetNX(ctx, key, valueBytes, opts.Expiration).Err()
@@ -72,6 +77,9 @@ func (sm *ServiceManager[T]) WritedownSingleWithLock(
 	lockTimeout time.Duration,
 ) (*T, error) {
 	rdb := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
+
 	var result T
 
 	// 尝试直接读取缓存
@@ -118,6 +126,9 @@ func (sm *ServiceManager[T]) WritedownSingleWithVersion(
 	expiration time.Duration,
 ) error {
 	rdb := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
+
 	versionKey := key + ":version"
 
 	valueBytes, err := marshalForRedis(data)

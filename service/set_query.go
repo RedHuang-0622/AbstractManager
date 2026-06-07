@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"AbstractManager/util"
 	"AbstractManager/util/filter_translator"
 
 	"gorm.io/gorm"
@@ -38,6 +39,8 @@ func (sm *ServiceManager[T]) SetQuery(
 	}
 
 	// 使用 Transaction 闭包自动管理提交和回滚
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
 	err := GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = sm.applyTableName(tx)
 
@@ -86,6 +89,9 @@ func (sm *ServiceManager[T]) BatchUpdate(
 	updates map[string]interface{},
 	queryFunc func(*gorm.DB) *gorm.DB,
 ) (int64, error) {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
+
 	var rowsAffected int64
 	err := GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = sm.applyTableName(tx)
@@ -116,6 +122,8 @@ func (sm *ServiceManager[T]) BatchUpsert(
 		return nil
 	}
 
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
 	return GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = sm.applyTableName(tx)
 		if batchSize <= 0 {
@@ -152,6 +160,8 @@ func (sm *ServiceManager[T]) BatchDelete(
 	queryFunc func(*gorm.DB) *gorm.DB,
 ) (int64, error) {
 	var rowsAffected int64
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
 	err := GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = sm.applyTableName(tx)
 		if queryFunc != nil {
@@ -182,6 +192,8 @@ func (sm *ServiceManager[T]) BatchIncrement(
 	}
 
 	var rowsAffected int64
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
 	err := GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = sm.applyTableName(tx)
 		if queryFunc != nil {
@@ -213,6 +225,8 @@ func (sm *ServiceManager[T]) BatchDecrement(
 
 	// 减量可以直接调用加量传入负值，或者保持原样
 	var rowsAffected int64
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
 	err := GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = sm.applyTableName(tx)
 		if queryFunc != nil {

@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
+
+	"AbstractManager/util"
 
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
@@ -22,14 +25,18 @@ func (sm *ServiceManager[T]) LookupSingle(
 	key string,
 	opts *LookupSingleOptions,
 ) (*T, error) {
-	rdb := GetRedis() // 🛠️ 保持使用 rdb 避免遮蔽包名
+	rdb := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 
 	// 1. 检查是否需要从缓存读取
 	if opts == nil || !opts.Refresh {
-		var result T
-		// 🛠️ 优化：直接使用 Scan 自动处理 JSON 解码
-		err := rdb.Get(ctx, key).Scan(&result)
+		val, err := rdb.Get(ctx, key).Bytes()
 		if err == nil {
+			var result T
+			if err := json.Unmarshal(val, &result); err != nil {
+				return nil, fmt.Errorf("redis lookup failed: %w", err)
+			}
 			return &result, nil
 		}
 
@@ -56,11 +63,16 @@ func (sm *ServiceManager[T]) LookupSingleWithFallback(
 	expiration time.Duration,
 ) (*T, error) {
 	rdb := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 
 	// 1. 尝试缓存
-	var result T
-	err := rdb.Get(ctx, key).Scan(&result)
+	val, err := rdb.Get(ctx, key).Bytes()
 	if err == nil {
+		var result T
+		if err := json.Unmarshal(val, &result); err != nil {
+			return nil, fmt.Errorf("cache error: %w", err)
+		}
 		return &result, nil
 	}
 	if err != redis.Nil {
@@ -82,6 +94,8 @@ func (sm *ServiceManager[T]) LookupSingleWithFallback(
 // InvalidateSingleCache 使单个缓存失效
 func (sm *ServiceManager[T]) InvalidateSingleCache(ctx context.Context, key string) error {
 	rdb := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 	// 🛠️ 修复：.Err() 获取错误，修复 %w 类型报错
 	if err := rdb.Del(ctx, key).Err(); err != nil {
 		return fmt.Errorf("failed to invalidate cache: %w", err)
@@ -92,6 +106,8 @@ func (sm *ServiceManager[T]) InvalidateSingleCache(ctx context.Context, key stri
 // ExistsInCache 检查缓存中是否存在
 func (sm *ServiceManager[T]) ExistsInCache(ctx context.Context, key string) (bool, error) {
 	rdb := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 	n, err := rdb.Exists(ctx, key).Result()
 	if err != nil {
 		return false, fmt.Errorf("exists check failed: %w", err)
@@ -102,6 +118,8 @@ func (sm *ServiceManager[T]) ExistsInCache(ctx context.Context, key string) (boo
 // ExtendCacheTTL 延长缓存的过期时间
 func (sm *ServiceManager[T]) ExtendCacheTTL(ctx context.Context, key string, expiration time.Duration) error {
 	rdb := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 	// 🛠️ 修复：使用 .Err() 确保传给 %w的是 error 类型
 	if err := rdb.Expire(ctx, key, expiration).Err(); err != nil {
 		return fmt.Errorf("failed to extend TTL: %w", err)
@@ -127,6 +145,8 @@ func (sm *ServiceManager[T]) InvalidateSingleCacheByID(ctx context.Context, id i
 // GetCacheTTL 获取缓存的剩余过期时间
 func (sm *ServiceManager[T]) GetCacheTTL(ctx context.Context, key string) (time.Duration, error) {
 	redisManager := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 	return redisManager.TTL(ctx, key).Result()
 }
 

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
+	"AbstractManager/util"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -32,6 +34,8 @@ func (sm *ServiceManager[T]) SetSingle(
 	}
 
 	// 开启事务闭包
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
 	err := GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = sm.applyTableName(tx)
 
@@ -63,6 +67,8 @@ func (sm *ServiceManager[T]) Update(
 	updates map[string]interface{},
 	queryFunc func(*gorm.DB) *gorm.DB,
 ) error {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
 	return GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = sm.applyTableName(tx)
 
@@ -76,6 +82,8 @@ func (sm *ServiceManager[T]) Update(
 
 // Save 保存单个数据（GORM 的 Save 方法，会保存所有字段）
 func (sm *ServiceManager[T]) Save(ctx context.Context, data *T) error {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
 	return GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = sm.applyTableName(tx)
 		return tx.Save(data).Error
@@ -89,6 +97,8 @@ func (sm *ServiceManager[T]) Upsert(
 	conflictColumns []string,
 	updateColumns []string,
 ) error {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
 	return GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = sm.applyTableName(tx)
 
@@ -112,6 +122,8 @@ func (sm *ServiceManager[T]) Delete(
 	ctx context.Context,
 	queryFunc func(*gorm.DB) *gorm.DB,
 ) error {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
 	return GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = sm.applyTableName(tx)
 
@@ -130,6 +142,8 @@ func (sm *ServiceManager[T]) Increment(
 	value interface{},
 	queryFunc func(*gorm.DB) *gorm.DB,
 ) error {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
 	return GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = sm.applyTableName(tx)
 
@@ -148,6 +162,8 @@ func (sm *ServiceManager[T]) Decrement(
 	value interface{},
 	queryFunc func(*gorm.DB) *gorm.DB,
 ) error {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
 	return GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx = sm.applyTableName(tx)
 

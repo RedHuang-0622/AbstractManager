@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"AbstractManager/util"
+
 	"gorm.io/gorm"
 )
 
@@ -16,6 +18,8 @@ type CreateOptions struct {
 
 // Create 创建数据表
 func (sm *ServiceManager[T]) Create(ctx context.Context, opts *CreateOptions) error {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDDLTimeout())
+	defer cancel()
 	db := GetDB().WithContext(ctx)
 
 	if opts == nil {
@@ -95,6 +99,8 @@ func (sm *ServiceManager[T]) createIndex(db *gorm.DB, idx Index) error {
 
 // DropTable 删除数据表
 func (sm *ServiceManager[T]) DropTable(ctx context.Context) error {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDDLTimeout())
+	defer cancel()
 	db := GetDB().WithContext(ctx)
 
 	tableName := sm.TableName
@@ -111,6 +117,8 @@ func (sm *ServiceManager[T]) DropTable(ctx context.Context) error {
 
 // HasTable 检查表是否存在
 func (sm *ServiceManager[T]) HasTable(ctx context.Context) (bool, error) {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
 	db := GetDB().WithContext(ctx)
 
 	tableName := sm.TableName

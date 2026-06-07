@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"AbstractManager/util"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -22,6 +24,9 @@ func (sm *ServiceManager[T]) GetSingle(
 	queryFunc func(*gorm.DB) *gorm.DB,
 	opts *SingleQueryOptions,
 ) (*T, error) {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
+
 	db := GetDB().WithContext(ctx)
 
 	// 如果需要加锁，使用更高的事务隔离级别
@@ -86,6 +91,9 @@ func (sm *ServiceManager[T]) GetSingleOrCreate(
 	queryFunc func(*gorm.DB) *gorm.DB,
 	createData *T,
 ) (*T, bool, error) {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
+
 	db := GetDB().WithContext(ctx)
 
 	// 开启 REPEATABLE READ 事务
@@ -138,6 +146,9 @@ func (sm *ServiceManager[T]) GetSingleWithLock(
 	ctx context.Context,
 	queryFunc func(*gorm.DB) *gorm.DB,
 ) (*T, *gorm.DB, error) {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
+
 	db := GetDB().WithContext(ctx)
 
 	// 开启事务
@@ -196,6 +207,9 @@ func (sm *ServiceManager[T]) GetFirst(
 	ctx context.Context,
 	queryFunc func(*gorm.DB) *gorm.DB,
 ) (*T, error) {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
+
 	db := GetDB().WithContext(ctx)
 
 	// 应用表名
@@ -222,6 +236,9 @@ func (sm *ServiceManager[T]) GetLast(
 	ctx context.Context,
 	queryFunc func(*gorm.DB) *gorm.DB,
 ) (*T, error) {
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultDBTimeout())
+	defer cancel()
+
 	db := GetDB().WithContext(ctx)
 
 	// 应用表名

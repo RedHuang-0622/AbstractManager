@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"AbstractManager/util"
+
 	"gorm.io/gorm"
 )
 
@@ -37,6 +39,8 @@ func (sm *ServiceManager[T]) WritedownQuery(
 	}
 
 	rdb := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
 		batchSize = 100
@@ -94,6 +98,8 @@ func (sm *ServiceManager[T]) WritedownWithPipeline(
 	}
 
 	rdb := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 
 	for i := 0; i < len(data); i += opts.BatchSize {
 		end := i + opts.BatchSize
@@ -137,6 +143,8 @@ func (sm *ServiceManager[T]) WritedownIncremental(
 	}
 
 	redis := GetRedis()
+	ctx, cancel := util.EnsureTimeout(ctx, util.GetDefaultRedisTimeout())
+	defer cancel()
 
 	for i := range data {
 		item := &data[i]
